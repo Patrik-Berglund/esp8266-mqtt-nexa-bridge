@@ -1,5 +1,4 @@
-/* main.c -- MQTT client example
-*
+/*
 * Copyright (c) 2014-2015, Tuan PM <tuanpm at live dot com>
 * All rights reserved.
 *
@@ -38,12 +37,11 @@
 #include "gpio.h"
 #include "user_interface.h"
 #include "mem.h"
-#include "jsmn.h"
 
 MQTT_Client mqttClient;
-ETSTimer bitTimer;
 
 uint32_t symbolTime = 250;
+
 bool nexaTxBusy = false;
 bool nexaTxStart = false;
 uint8_t nexaRawFrame[43] = {0};
@@ -67,7 +65,7 @@ void ICACHE_FLASH_ATTR wifiConnectCb(uint8_t status){
 void ICACHE_FLASH_ATTR mqttConnectedCb(uint32_t *args){
 	MQTT_Client* client = (MQTT_Client*)args;
 	INFO("MQTT: Connected\n");
-	MQTT_Subscribe(client, "/89548efd-c75f-4128-9629-095e8b51f885/nexabridge/send", 0);
+	MQTT_Subscribe(client, MQTT_TOPIC_NEXA_BRIDGE_SEND, 0);
 }
 
 void ICACHE_FLASH_ATTR mqttDisconnectedCb(uint32_t *args){
@@ -80,161 +78,12 @@ void ICACHE_FLASH_ATTR mqttPublishedCb(uint32_t *args){
 	INFO("MQTT: Published\n");
 }
 
-bool ICACHE_FLASH_ATTR testBit32( int A[],  int k ){
-	return (bool)( (A[k/32] & (1 << (k%32) )) != 0 ) ;     
-}
-
-bool testBit8(uint8_t A[],  int k ){
-	return (bool)( (A[k/8] & (1 << (k%8) )) != 0 ) ;     
-}
-
-bool ICACHE_FLASH_ATTR jsoneq(const char *json, jsmntok_t *tok, const char *s) {
-	return (bool)(tok->type == JSMN_STRING && (int) strlen(s) == tok->end - tok->start && strncmpi(json + tok->start, s, tok->end - tok->start) == 0);
-}
-
-void ICACHE_FLASH_ATTR createNexaFrame(int version, int id, int group, int onOff, int channel, int dim, int repeat){
-	uint8_t header[2] = {0x00, 0x04};
-	uint8_t zeroBit = 0xA0;
-	uint8_t oneBit = 0x82;
-	uint8_t trailer[5] = {0x00, 0x00, 0x00, 0x00, 0x80};
-
-	uint32_t i;
-	int f = 0;
-
-	if(!nexaTxBusy){
-		if(version == 1){
-			id = (id >= 0 && id <= 0x3FFFFFF) ? id : 0;
-			group = (group >= 0 && group <= 1) ? group : 0;
-			onOff = (onOff >= 0 && onOff <= 1) ? onOff : 0;
-			channel = (channel >= 0 && channel <= 16) ? channel : 0;
-			dim = (dim >= 0 && dim <= 16) ? dim : 0;
-			repeat = (repeat >= 0 && repeat <= 256) ? repeat : 0;
-
-			f = id & 0xFFFFFFC0;
-			f |= ((group & 1) << 5);
-			f |= ((onOff & 1) << 4);
-			f |= ((~channel) & 15);
-
-			INFO("NEXA word: %X\n", f);
-
-			os_memcpy(nexaRawFrame, trailer, 5);
-
-			for(i=0;i<32;i++){
-				nexaRawFrame[i+5] = (testBit32(&f, i)) ? oneBit : zeroBit;
-			}
-
-			os_memcpy(nexaRawFrame+i+5, header, 2);
-
-			nexaRawFrameLength = (2 + 32 + 5) * 8;
-			nexaRawFrameCounter = 0;
-			nexaRawFrameRepeatCounter = (uint8_t) repeat;
-
-// 			INFO("NEXA RAW Frame repeat: %d\n", nexaRawFrameRepeatCounter);
-// 
-// 			INFO("NEXA RAW Frame: \n");
-// 			for(i=0; i < 39;i++){
-// 				INFO("%X", nexaRawFrame[38-i]);
-// 			}
-// 
-// 			INFO("\n");
-// 
-// 			for(i=0; i < nexaRawFrameLength;i++){
-// 				INFO("%d", (testBit8(nexaRawFrame, nexaRawFrameLength-1-i)) ? 1 : 0);
-// 			}
-// 
-// 			INFO("\n");
-			nexaTxBusy = true;
-			nexaTxStart = true;
-		}
-	}
-	else{
-		INFO("NEXA Transmitter busy!");
-	}
-}
-
 void ICACHE_FLASH_ATTR mqttParseMessage(const char* topic, uint32_t topic_len, const char *data, uint32_t data_len){
-	int i;
-	int r;
-	jsmn_parser p;
-	jsmntok_t t[15];
-
-	bool versionAssigned = false;
-	bool idAssigned = false;
-	bool groupAssigned = false;
-	bool onffAssigned = false;
-	bool channelAssigned = false;
-	bool dimAssigned = false;
-	bool repeatAssigned = false;
-	int version, id, group, onoff, channel, dim = 0, repeat = 0;
-
-	if(strcmpi(topic, "/89548efd-c75f-4128-9629-095e8b51f885/nexabridge/send") == 0)	{
-		jsmn_init(&p);
-		r = jsmn_parse(&p, data, data_len, t, sizeof(t)/sizeof(t[0]));
-
-		if (r < 0) {
-			INFO("Failed to parse JSON: %d\n", r);
-			return;
-		}
-
-		if (r < 1 || t[0].type != JSMN_OBJECT) {
-			INFO("Object expected\n");
-			return;
-		}
-
-		if(r < 11 || r > 15){
-			INFO("Missing token(s): %d\n", r);
-			return;
-		}
-
-		for (i = 1; i < r; i++) {
-			if (jsoneq(data, &t[i], "version")) {
-				version = strtol(data + t[i+1].start, NULL, 10);
-				versionAssigned = true;
-				INFO("- Version: %d\n", version);
-				i++;
-			} else if (jsoneq(data, &t[i], "id")) {
-				id = strtol(data + t[i+1].start, NULL, 10);
-				idAssigned = true;
-				INFO("- Id: %d\n", id);
-				i++;
-			} else if (jsoneq(data, &t[i], "group")) {
-				group = strtol(data + t[i+1].start, NULL, 10);				
-				groupAssigned = true;
-				INFO("- Group: %d\n", group);
-				i++;
-			} else if (jsoneq(data, &t[i], "onoff")) {
-				onoff = strtol(data + t[i+1].start, NULL, 10);
-				onffAssigned = true;
-				INFO("- OnOff: %d\n", onoff);
-				i++;
-			} else if (jsoneq(data, &t[i], "channel")) {
-				channel = strtol(data + t[i+1].start, NULL, 10);
-				channelAssigned = true;
-				INFO("- Channel: %d\n", channel);
-				i++;
-			} else if (jsoneq(data, &t[i], "dim")) {
-				dim = strtol(data + t[i+1].start, NULL, 10);
-				dimAssigned = true;
-				INFO("- Dim: %d\n", dim);
-				i++;
-			} else if (jsoneq(data, &t[i], "repeat")) {
-				repeat = strtol(data + t[i+1].start, NULL, 10);
-				repeatAssigned = true;
-				INFO("- Repeat: %d\n", repeat);
-				i++;
-			} else {
-				INFO("Unexpected key\n");
-			}	
-		}
-
-		if(versionAssigned && idAssigned && groupAssigned && onffAssigned && channelAssigned){
-			INFO("All parameters assigned\n");
-
-			createNexaFrame(version, id, group, onoff, channel, dim, repeat);
-		}
+	if(strcmpi(topic, MQTT_TOPIC_NEXA_BRIDGE_SEND) == 0){
+        parseNexaSendMessage(data, data_len);
 	}
 	else{
-		INFO("Unknown topic\n");
+		INFO("MQTT: Unknown topic\n");
 	}
 }
 
@@ -250,12 +99,153 @@ void ICACHE_FLASH_ATTR mqttDataCb(uint32_t *args, const char* topic, uint32_t to
 	os_memcpy(dataBuf, data, data_len);
 	dataBuf[data_len] = 0;
 
-	INFO("Receive topic: %s, data: %s\n", topicBuf, dataBuf);
+	INFO("MQTT: Receive topic: %s, data: %s\n", topicBuf, dataBuf);
 
 	mqttParseMessage(topicBuf, topic_len, dataBuf, data_len);
 
 	os_free(topicBuf);
 	os_free(dataBuf);
+}
+
+void ICACHE_FLASH_ATTR parseNexaSendMessage(const char *data, uint32_t data_len){
+    uint32_t i;
+	int32_t r;
+	jsmn_parser p;
+	jsmntok_t t[15];
+
+	bool versionAssigned = false;
+	bool idAssigned = false;
+	bool groupAssigned = false;
+	bool onffAssigned = false;
+	bool channelAssigned = false;
+	bool dimAssigned = false;
+	bool repeatAssigned = false;
+	int32_t version = 1, id, group, onoff, channel, dim = 0, repeat = 0;
+
+    jsmn_init(&p);
+    r = jsmn_parse(&p, data, data_len, t, sizeof(t)/sizeof(t[0]));
+
+    if (r < 0) {
+        INFO("NEXA: JSON, Parser error: %d\n", r);
+        return;
+    }
+
+    if (r < 1 || t[0].type != JSMN_OBJECT) {
+        INFO("NEXA: JSON, Object expected\n");
+        return;
+    }
+
+    if((r != 11) && (r != 13) && (r != 15)){
+        INFO("NEXA: JSON, Missing token(s): %d\n", r);
+        return;
+    }
+
+    INFO("NEXA: JSON payload \n");
+
+    for (i = 1; i < r; i++) {
+        if (jsonEq(data, &t[i], "version")) {
+            version = strtol(data + t[i+1].start, NULL, 10);
+            versionAssigned = true;
+            INFO("\tVersion: %d\n", version);
+            i++;
+        } else if (jsonEq(data, &t[i], "id")) {
+            id = strtol(data + t[i+1].start, NULL, 10);
+            idAssigned = true;
+            INFO("\tId: %d\n", id);
+            i++;
+        } else if (jsonEq(data, &t[i], "group")) {
+            group = strtol(data + t[i+1].start, NULL, 10);				
+            groupAssigned = true;
+            INFO("\tGroup: %d\n", group);
+            i++;
+        } else if (jsonEq(data, &t[i], "onoff")) {
+            onoff = strtol(data + t[i+1].start, NULL, 10);
+            onffAssigned = true;
+            INFO("\tOnOff: %d\n", onoff);
+            i++;
+        } else if (jsonEq(data, &t[i], "channel")) {
+            channel = strtol(data + t[i+1].start, NULL, 10);
+            channelAssigned = true;
+            INFO("\tChannel: %d\n", channel);
+            i++;
+        } else if (jsonEq(data, &t[i], "dim")) {
+            dim = strtol(data + t[i+1].start, NULL, 10);
+            dimAssigned = true;
+            INFO("\tDim: %d\n", dim);
+            i++;
+        } else if (jsonEq(data, &t[i], "repeat")) {
+            repeat = strtol(data + t[i+1].start, NULL, 10);
+            repeatAssigned = true;
+            INFO("\tRepeat: %d\n", repeat);
+            i++;
+        } else {
+            INFO("\tUnexpected key\n");
+        }	
+    }
+
+    if(idAssigned && groupAssigned && onffAssigned && channelAssigned){
+        INFO("NEXA: JSON, All parameters assigned\n");
+
+        createNexaFrame(version, id, group, onoff, channel, dim, repeat);
+    }
+}
+
+void ICACHE_FLASH_ATTR createNexaFrame(int32_t version, int32_t id, int32_t group, int32_t onOff, int32_t channel, int32_t dim, int32_t repeat){
+	uint8_t header[2] = {0x00, 0x04};
+	uint8_t zeroBit = 0xA0;
+	uint8_t oneBit = 0x82;
+	uint8_t trailer[5] = {0x00, 0x00, 0x00, 0x00, 0x80};
+
+	uint32_t i;
+	int32_t f = 0;
+
+	if(!nexaTxBusy){
+		if(version == 1){
+			id = (id >= 0 && id <= 0x3FFFFFF) ? id : 0;
+			group = (group >= 0 && group <= 1) ? group : 0;
+			onOff = (onOff >= 0 && onOff <= 1) ? onOff : 0;
+			channel = (channel >= 0 && channel <= 15) ? channel : 0;
+			dim = (dim >= 0 && dim <= 15) ? dim : 0;
+			repeat = (repeat >= 0 && repeat <= 255) ? repeat : 0;
+
+			f = id & 0xFFFFFFC0;
+			f |= ((group & 1) << 5);
+			f |= ((onOff & 1) << 4);
+			f |= ((~channel) & 15);
+
+			INFO("NEXA: Word: %X\n", f);
+
+			os_memcpy(nexaRawFrame, trailer, 5);
+
+			for(i=0;i<32;i++){
+				nexaRawFrame[i+5] = (testBit32(&f, i)) ? oneBit : zeroBit;
+			}
+
+			os_memcpy(nexaRawFrame+i+5, header, 2);
+
+			nexaRawFrameLength = (2 + 32 + 5) * 8;
+			nexaRawFrameCounter = 0;
+			nexaRawFrameRepeatCounter = (uint8_t) repeat;
+
+			INFO("NEXA: RAW Frame [HEX]: \n");
+			for(i=0; i < 39;i++){
+				INFO("%X", nexaRawFrame[38-i]);
+			}
+			INFO("\n");
+
+            INFO("NEXA: RAW Frame [BIN]: \n");
+			for(i=0; i < nexaRawFrameLength;i++){
+				INFO("%d", (testBit8(nexaRawFrame, nexaRawFrameLength-1-i)) ? 1 : 0);
+			}
+			INFO("\n");
+            
+			nexaTxBusy = true;
+			nexaTxStart = true;
+		}
+	}
+	else{
+		INFO("NEXA: Error, Transmitter busy!");
+	}
 }
 
 void symbolTimerCb(void){
@@ -279,13 +269,25 @@ void symbolTimerCb(void){
 	}
 }
 
-void ICACHE_FLASH_ATTR GPIO_Setup(void){
+bool ICACHE_FLASH_ATTR testBit32( int32_t A[],  int32_t k ){
+	return (bool)( (A[k/32] & (1 << (k%32) )) != 0 ) ;     
+}
+
+bool testBit8(uint8_t A[],  int32_t k ){
+	return (bool)( (A[k/8] & (1 << (k%8) )) != 0 ) ;     
+}
+
+bool ICACHE_FLASH_ATTR jsonEq(const char *json, jsmntok_t *tok, const char *s) {
+	return (bool)(tok->type == JSMN_STRING && (int) strlen(s) == tok->end - tok->start && strncmpi(json + tok->start, s, tok->end - tok->start) == 0);
+}
+
+void ICACHE_FLASH_ATTR gpioSetup(void){
     gpio_init();
     PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO2_U, FUNC_GPIO2);
 	gpio_output_set(0, BIT2, BIT2, 0);
 }
 
-void ICACHE_FLASH_ATTR Timers_Setup(void){
+void ICACHE_FLASH_ATTR timerSetup(void){
  	hw_timer_init(FRC1_SOURCE, 1);
  	hw_timer_set_func(symbolTimerCb);
  	hw_timer_arm(symbolTime);
@@ -300,9 +302,9 @@ void ICACHE_FLASH_ATTR user_init(void){
 	INFO("SDK version: %s\n", system_get_sdk_version());
 	INFO("System init ...\n");
 
-	//CFG_Load();
+	CFG_Load();
 
-	GPIO_Setup();
+	gpioSetup();
 
 	MQTT_InitConnection(&mqttClient, sysCfg.mqtt_host, sysCfg.mqtt_port, sysCfg.security);
 	MQTT_InitClient(&mqttClient, sysCfg.device_id, sysCfg.mqtt_user, sysCfg.mqtt_pass, sysCfg.mqtt_keepalive, 1);
@@ -314,7 +316,7 @@ void ICACHE_FLASH_ATTR user_init(void){
 
 	WIFI_Connect(sysCfg.sta_ssid, sysCfg.sta_pwd, wifiConnectCb);
 
-	Timers_Setup();
+	timerSetup();
 
 	INFO("\nSystem started ...\n");
 }
