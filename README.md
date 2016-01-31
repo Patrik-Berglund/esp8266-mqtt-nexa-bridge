@@ -27,10 +27,11 @@ Or for a dimmer
 }
 ```
 Where 
-- id, 26 bit (0 - 67108863) unique identifier code, also known as "home code" in decimal format
+- id, 26 bit (0 - 67108863) unique identifier code, also known as "home code"
 - group, 1 bit (0 - 1) indicateing if it's a group command or not
 - onoff, 1 bit (0 - 1), on or off
-- channel, 4 bit (0 - 15) channel code
+- channel, 4 bit (0 - 15) channel 
+- dim, 4 bit (0 - 15) Dimmer level
 
 MQTT and WIFI settings are configured in the user_config.h file  
 
