@@ -41,7 +41,8 @@ void ICACHE_FLASH_ATTR mqttConnectedCb(uint32_t *args);
 void ICACHE_FLASH_ATTR mqttDisconnectedCb(uint32_t *args);
 void ICACHE_FLASH_ATTR mqttPublishedCb(uint32_t *args);
 
-bool ICACHE_FLASH_ATTR testBit32( int32_t A[],  int32_t k );
+bool ICACHE_FLASH_ATTR testBit32( uint32_t A[],  int32_t k );
+bool ICACHE_FLASH_ATTR testBit64( uint64_t A[],  int32_t k );
 bool testBit8(uint8_t A[],  int32_t k );
 
 bool ICACHE_FLASH_ATTR jsonEq(const char *json, jsmntok_t *tok, const char *s);

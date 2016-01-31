@@ -120,7 +120,7 @@ void ICACHE_FLASH_ATTR parseNexaSendMessage(const char *data, uint32_t data_len)
 	bool channelAssigned = false;
 	bool dimAssigned = false;
 	bool repeatAssigned = false;
-	int32_t version = 1, id, group, onoff, channel, dim = 0, repeat = 0;
+	int32_t version = 1, id, group, onoff, channel, dim = 0, repeat = 4;
 
     jsmn_init(&p);
     r = jsmn_parse(&p, data, data_len, t, sizeof(t)/sizeof(t[0]));
@@ -135,7 +135,7 @@ void ICACHE_FLASH_ATTR parseNexaSendMessage(const char *data, uint32_t data_len)
         return;
     }
 
-    if((r != 11) && (r != 13) && (r != 15)){
+    if((r != 9) && (r != 11) && (r != 13) && (r != 15)){
         INFO("NEXA: JSON, Missing token(s): %d\n", r);
         return;
     }
@@ -184,9 +184,11 @@ void ICACHE_FLASH_ATTR parseNexaSendMessage(const char *data, uint32_t data_len)
     }
 
     if(idAssigned && groupAssigned && onffAssigned && channelAssigned){
-        INFO("NEXA: JSON, All parameters assigned\n");
-
-        createNexaFrame(version, id, group, onoff, channel, dim, repeat);
+        INFO("NEXA: JSON, All parameters assigned for on/off breaker\n");
+        createNexaFrame(version, id, group, onoff, channel, -1, repeat);
+    }else if(idAssigned && groupAssigned && channelAssigned && dimAssigned){
+        INFO("NEXA: JSON, All parameters assigned for dimmer \n");
+        createNexaFrame(version, id, group, 0, channel, dim, repeat);
     }
 }
 
@@ -196,42 +198,61 @@ void ICACHE_FLASH_ATTR createNexaFrame(int32_t version, int32_t id, int32_t grou
 	uint8_t oneBit = 0x82;
 	uint8_t trailer[5] = {0x00, 0x00, 0x00, 0x00, 0x80};
 
-	uint32_t i;
-	int32_t f = 0;
+  	uint32_t i;
+	uint64_t f = 0;
+    uint8_t fLength = 0;    
 
 	if(!nexaTxBusy){
-		if(version == 1){
-			id = (id >= 0 && id <= 0x3FFFFFF) ? id : 0;
-			group = (group >= 0 && group <= 1) ? group : 0;
-			onOff = (onOff >= 0 && onOff <= 1) ? onOff : 0;
-			channel = (channel >= 0 && channel <= 15) ? channel : 0;
-			dim = (dim >= 0 && dim <= 15) ? dim : 0;
-			repeat = (repeat >= 0 && repeat <= 255) ? repeat : 0;
+		if(version == 1){        
+			os_memcpy(nexaRawFrame, trailer, 5);
+            fLength+=5;
 
-			f = id & 0xFFFFFFC0;
+			f = (id & 0x3FFFFFF) << 6;
 			f |= ((group & 1) << 5);
 			f |= ((onOff & 1) << 4);
-			f |= ((~channel) & 15);
+			f |= ((~channel) & 15);            
+            fLength+=32;
 
-			INFO("NEXA: Word: %X\n", f);
+            if(dim >= 0){
+                f <<=4;
+                f |= (dim & 15);
+                fLength+=4;
+            }
+            
+            INFO("NEXA WORD: %08x %08x\n", *(((uint32_t*)(&f))+1), f);
+            
+			for(i=5;i<fLength;i++){
+				nexaRawFrame[i] = (testBit64(&f, i-5)) ? oneBit : zeroBit;
+			}           
 
-			os_memcpy(nexaRawFrame, trailer, 5);
+			os_memcpy(nexaRawFrame+fLength, header, 2);
+            fLength+=2;
 
-			for(i=0;i<32;i++){
-				nexaRawFrame[i+5] = (testBit32(&f, i)) ? oneBit : zeroBit;
-			}
-
-			os_memcpy(nexaRawFrame+i+5, header, 2);
-
-			nexaRawFrameLength = (2 + 32 + 5) * 8;
+			nexaRawFrameLength = fLength * 8;
 			nexaRawFrameCounter = 0;
 			nexaRawFrameRepeatCounter = (uint8_t) repeat;
-
+            
+            INFO("NEXA: RAW Frame length: %u \n", nexaRawFrameLength);
 			INFO("NEXA: RAW Frame [HEX]: \n");
-			for(i=0; i < 39;i++){
-				INFO("%X", nexaRawFrame[38-i]);
+			for(i=0; i < fLength;i++){
+				INFO("%02X ", nexaRawFrame[fLength-1-i]);
 			}
 			INFO("\n");
+
+            if(dim >= 0){
+                nexaRawFrame[13] = 0xA0;                
+                for(i=13;i > 0;i--){                    
+                    nexaRawFrame[i] &= 0xF0; 
+                    nexaRawFrame[i] |= ((nexaRawFrame[i-1] & 0xF0) >> 4);
+                    nexaRawFrame[i-1] <<= 4;
+                }
+                
+                INFO("NEXA: After dim, RAW Frame [HEX]: \n");
+                for(i=0; i < fLength;i++){
+                    INFO("%02X ", nexaRawFrame[fLength-1-i]);
+                }
+                INFO("\n");
+            }
 
             INFO("NEXA: RAW Frame [BIN]: \n");
 			for(i=0; i < nexaRawFrameLength;i++){
@@ -241,7 +262,8 @@ void ICACHE_FLASH_ATTR createNexaFrame(int32_t version, int32_t id, int32_t grou
             
 			nexaTxBusy = true;
 			nexaTxStart = true;
-		}
+        }
+        
 	}
 	else{
 		INFO("NEXA: Error, Transmitter busy!");
@@ -269,12 +291,16 @@ void symbolTimerCb(void){
 	}
 }
 
-bool ICACHE_FLASH_ATTR testBit32( int32_t A[],  int32_t k ){
-	return (bool)( (A[k/32] & (1 << (k%32) )) != 0 ) ;     
+bool testBit8(uint8_t A[],  int32_t k ){
+	return (bool)( (A[k/8] & ((uint8_t)1 << (k%8) )) != 0 );     
 }
 
-bool testBit8(uint8_t A[],  int32_t k ){
-	return (bool)( (A[k/8] & (1 << (k%8) )) != 0 ) ;     
+bool ICACHE_FLASH_ATTR testBit32( uint32_t A[],  int32_t k ){
+	return (bool)( (A[k/32] & ((uint32_t)1 << (k%32) )) != 0 );     
+}
+
+bool ICACHE_FLASH_ATTR testBit64( uint64_t A[],  int32_t k ){
+	return (bool)( (A[k/64] & ((uint64_t)1 << (k%64) )) != 0 );     
 }
 
 bool ICACHE_FLASH_ATTR jsonEq(const char *json, jsmntok_t *tok, const char *s) {
