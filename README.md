@@ -1,7 +1,7 @@
 esp8266-mqtt-nexa-bridge
 ------------------------
 
-A simple MQTT to NEXA bridge using the Esperssif ESP8266 SoC and a 433MHz AM module. Currently only the transmit function is implemented and there is no support for dimmers.
+A simple MQTT to NEXA bridge using the Esperssif ESP8266 SoC and a 433MHz AM module. Currently only the transmit function is implemented.
 
 The ESP8266 GPIO_2 shall be connected to the data pin of the transmitter module.  
 
@@ -13,7 +13,18 @@ The MQTT message should be formatted as the following JSON example:
     "onoff": 1,
     "channel": 0,
     "repeat": 0
-}    
+}
+```
+Or for a dimmer
+```JSON
+{
+	"id": 123456
+	"group": 0,
+	"onoff": 0,
+	"dim": 0,
+	"channel": 0,
+	"repeat": 5
+}
 ```
 Where 
 - id, 26 bit (0 - 67108863) unique identifier code, also known as "home code" in decimal format
