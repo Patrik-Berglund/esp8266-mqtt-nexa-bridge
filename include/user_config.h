@@ -9,7 +9,6 @@
 #define CLIENT_SSL_ENABLE
 
 /*DEFAULT CONFIGURATIONS*/
-
 #define MQTT_TOPIC_NEXA_BRIDGE_SEND "/mqtt/nexabridge/send"
 
 #define MQTT_HOST			"test.mosquitto.org" //or "mqtt.yourdomain.com"
