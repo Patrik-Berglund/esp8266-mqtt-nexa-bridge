@@ -12,13 +12,13 @@ The MQTT message should be formatted as the following JSON example:
     "group": 0,
     "onoff": 1,
     "channel": 0,
-    "repeat": 0
+    "repeat": 5
 }
 ```
 Or for a dimmer
 ```JSON
 {
-	"id": 123456
+	"id": 123456,
 	"group": 0,
 	"onoff": 0,
 	"dim": 0,
